@@ -52,60 +52,68 @@ let alreadyImported = ref ([] : string list)
 
 let checkbinding fi ctx b = match b with
     NameBind -> NameBind
-  | VarBind(tyT) -> VarBind(tyT)
-  | TmAbbBind(t,None) -> TmAbbBind(t, Some(typeof ctx t))
-  | TmAbbBind(t,Some(tyT)) ->
+  | VarBind(tyT,a) -> VarBind(tyT,a)
+  | TmAbbBind(t,None,a,p) -> TmAbbBind(t, Some(typeof ctx t),a,p) (*should add authentication checking here*)
+  | TmAbbBind(t,Some(tyT),a,p) ->   (*should add authentication checking here*)
      let tyT' = typeof ctx t in
-     if subtype ctx tyT' tyT then TmAbbBind(t,Some(tyT))
+     if subtype ctx tyT' tyT then TmAbbBind(t,Some(tyT),a,p)
      else error fi "Type of binding does not match declared type"
   | TyVarBind -> TyVarBind
   | TyAbbBind(tyT) -> TyAbbBind(tyT)
 
 let prbindingty ctx b = match b with
     NameBind -> ()
-  | VarBind(tyT) -> pr ": "; printty ctx tyT 
-  | TmAbbBind(t, tyT_opt) -> pr ": ";
+  | VarBind(tyT,a) -> pr ": "; printty ctx tyT 
+  | TmAbbBind(t, tyT_opt,p,a) -> pr ": ";     (*should add authentication checking here*)
      (match tyT_opt with
          None -> printty ctx (typeof ctx t)
        | Some(tyT) -> printty ctx tyT)
   | TyVarBind -> ()
   | TyAbbBind(tyT) -> pr ":: *"
 
-let rec process_file f (ctx,store) =
+let rec process_file f (ctx,store,pTab) =
   if List.mem f (!alreadyImported) then
-    (ctx,store)
+    (ctx,store,pTab)
   else (
     alreadyImported := f :: !alreadyImported;
     let cmds,_ = parseFile f ctx in
-    let g (ctx,store) c =  
+    let g (ctx,store,pTab) c =  
       open_hvbox 0;
-      let results = process_command (ctx,store) c in
+      let results = process_command (ctx,store,pTab) c in
       print_flush();
       results
     in
-      List.fold_left g (ctx,store) cmds)
+      List.fold_left g (ctx,store,pTab) cmds)
 
-and process_command (ctx,store) cmd = match cmd with
+and process_command (ctx,store,pTab) cmd = match cmd with
     Import(f) -> 
-      process_file f (ctx,store)
-  | Eval(fi,t) -> 
+      process_file f (ctx,store,pTab)
+  | Eval(fi,p,t) -> 
+      (* pr "evaluation"; *)
       let tyT = typeof ctx t in
-      let t',store  = eval ctx store t in
+      let auth = authOf ctx pTab p t in
+      let t',store  = eval ctx store pTab p t in
       printtm_ATerm true ctx t'; 
       print_break 1 2;
       pr ": ";
       printty ctx tyT;
       force_newline();
-      (ctx,store)
-  | Bind(fi,x,bind) -> 
+      (ctx,store,pTab)
+  | Bind(fi,p,x,bind) -> 
       let bind = checkbinding fi ctx bind in (*check some validity*)
-      let bind',store' = evalbinding ctx store bind in (*evaluate the terms*)
+      let bind',store' = evalbinding ctx store pTab p bind in (*evaluate the terms*)
       pr x; pr " "; prbindingty ctx bind'; force_newline();
-      addbinding ctx x bind', (shiftstore 1 store') (*add the binding to context ??????shiftstore??????*)
+      addbinding ctx x bind', (shiftstore 1 store'), pTab (*add the binding to context ??????shiftstore??????*)
+  | PersetRelDecl(h,l) ->
+      let pTab' = addPerset pTab h l in
+      prPersetTab pTab'; force_newline();
+      (ctx,store,pTab')
+  | PersetDecl(_) ->
+      (ctx,store,pTab)
   
 let main () = 
   let inFile = parseArgs() in (*parse the input file?*)
-  let _ = process_file inFile (emptycontext, emptystore) in
+  let _ = process_file inFile (emptycontext, emptystore, emptyPersetTable) in
   ()
 
 let () = set_max_boxes 1000

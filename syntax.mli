@@ -21,19 +21,25 @@ type ty =
   | TyFloat
   | TyNat
 
-type auAtom = 
-    AuAtomUp of string
-  | AuAtomDown of string
+type perset = 
+  | Perset of string
 
+(* type auAtom = 
+    AuAtomUp of string
+  | AuAtomDown of string *)
+
+(* type auComp =
+    AuComp of auth * auAtom *)
 
 type auth =
-    AuAtom of auAtom
-  | AuComp of auth * auAtom
+    AuAtomUp of string
+  | AuAtomDown of string
+  | AuComp of auth * auth
   | AuArr of auth * auth
 
 type term =
     TmVar of info * int * int
-  | TmAbs of info * string * ty * term
+  | TmAbs of info * string * ty * auth * term
   | TmApp of info * term * term
   | TmAscribe of info * term * ty
   | TmString of info * string
@@ -63,15 +69,17 @@ type term =
 
 type binding =
     NameBind 
-  | VarBind of ty
-  | TmAbbBind of term * (ty option)
+  | VarBind of ty * auth
+  | TmAbbBind of term * (ty option) * (auth option) * perset
   | TyVarBind
   | TyAbbBind of ty
 
 type command =
     Import of string
-  | Eval of info * term
-  | Bind of info * string * binding
+  | Eval of info * perset * term
+  | Bind of info * perset * string * binding
+  | PersetRelDecl of perset * perset
+  | PersetDecl of perset
 
 (* Contexts *)
 type context
@@ -84,6 +92,17 @@ val getbinding : info -> context -> int -> binding
 val name2index : info -> context -> string -> int
 val isnamebound : context -> string -> bool
 val getTypeFromContext : info -> context -> int -> ty
+
+(* Perset *)
+type persetTable
+type edge
+val emptyPersetTable : persetTable
+val addPerset : persetTable -> perset -> perset -> persetTable
+val prPerset : perset -> unit
+val prPersetTab : persetTable -> unit
+val prPersets : edge list -> unit
+val makeAuthUp : perset -> auth
+val makeAuthDown : perset -> auth
 
 (* Shifting and substitution *)
 val termShift: int -> term -> term

@@ -1,6 +1,7 @@
 open Format
 open Support.Error
 open Support.Pervasive
+open Set
 
 (* ---------------------------------------------------------------------- *)
 (* Datatypes *)
@@ -22,21 +23,25 @@ type ty =
   | TyFloat
   | TyNat
 
-type auAtom = 
+type perset = 
+  | Perset of string
+
+(* type auAtom = 
     AuAtomUp of string
-  | AuAtomDown of string
+  | AuAtomDown of string *)
 
 (* type auComp =
     AuComp of auth * auAtom *)
 
 type auth =
-    AuAtom of auAtom
-  | AuComp of auth * auAtom
+    AuAtomUp of string
+  | AuAtomDown of string
+  | AuComp of auth * auth
   | AuArr of auth * auth
 
 type term =
     TmVar of info * int * int
-  | TmAbs of info * string * ty * term
+  | TmAbs of info * string * ty * auth * term
   | TmApp of info * term * term
   | TmAscribe of info * term * ty
   | TmString of info * string
@@ -66,8 +71,8 @@ type term =
 
 type binding =
     NameBind 
-  | VarBind of ty
-  | TmAbbBind of term * (ty option)
+  | VarBind of ty * auth
+  | TmAbbBind of term * (ty option) * (auth option) * perset
   | TyVarBind
   | TyAbbBind of ty
 
@@ -75,8 +80,10 @@ type context = (string * binding) list
 
 type command =
     Import of string
-  | Eval of info * term
-  | Bind of info * string * binding
+  | Eval of info * perset * term
+  | Bind of info * perset * string * binding
+  | PersetRelDecl of perset * perset
+  | PersetDecl of perset
 
 (* ---------------------------------------------------------------------- *)
 (* Context management *)
@@ -141,9 +148,11 @@ let tymap onvar c tyT =
 let tmmap onvar ontype c t = 
   let rec walk c t = match t with
     TmVar(fi,x,n) -> onvar fi c x n
-  | TmAbs(fi,x,tyT1,t2) -> TmAbs(fi,x,ontype c tyT1,walk (c+1) t2)
+  | TmAbs(fi,x,tyT1,auth,t2) -> TmAbs(fi,x,ontype c tyT1,auth,walk (c+1) t2)
   | TmApp(fi,t1,t2) -> TmApp(fi,walk c t1,walk c t2)
   | TmAscribe(fi,t1,tyT1) -> TmAscribe(fi,walk c t1,ontype c tyT1)
+  | TmAuas(fi,t1,auth) -> TmAuas(fi,walk c t1, auth)    (*may need auth shift in future*)
+  | TmRequire(fi,t1,auth) -> TmRequire(fi,walk c t1, auth) (*may need auth shift in future*)
   | TmString _ as t -> t
   | TmUnit(fi) as t -> t
   | TmLoc(fi,l) as t -> t
@@ -192,12 +201,12 @@ let typeShift d tyT = typeShiftAbove d 0 tyT
 let bindingshift d bind =
   match bind with
     NameBind -> NameBind
-  | VarBind(tyT) -> VarBind(typeShift d tyT)
-  | TmAbbBind(t,tyT_opt) ->
+  | VarBind(tyT,auth) -> VarBind((typeShift d tyT), auth)
+  | TmAbbBind(t,tyT_opt,auth,p) ->
      let tyT_opt' = match tyT_opt with
                       None->None
                     | Some(tyT) -> Some(typeShift d tyT) in
-     TmAbbBind(termShift d t, tyT_opt')
+     TmAbbBind(termShift d t, tyT_opt',auth,p)
   | TyVarBind -> TyVarBind
   | TyAbbBind(tyT) -> TyAbbBind(typeShift d tyT)
 
@@ -229,6 +238,74 @@ let tytermSubstTop tyS t =
   termShift (-1) (tytermSubst (typeShift 1 tyS) 0 t)
 
 (* ---------------------------------------------------------------------- *)
+(* Perset management (continued) *)
+module OrderedPerset = struct 
+  type t = perset
+  (* use Pervasives compare *)
+  let compare = compare
+end
+
+module Ints = Set.Make(Int)
+
+module PSet = Set.Make(OrderedPerset)
+
+type edge = {high : perset; low : perset}
+
+type persetTable = PersetTable of PSet.t * edge list
+
+let emptyPersetTable = PersetTable(PSet.empty, [])
+
+
+let prPerset p =
+  match p with Perset(s) -> pr s
+
+let prPersets elist =
+  List.iter (fun e -> match e with {high=h; low=l} -> prPerset h;pr "->"; prPerset l; pr "; ") elist
+  
+        
+let prPersetTab persetTable =
+  match persetTable with
+  | PersetTable(pset, elist) -> prPersets elist
+
+
+
+let rec persetChildren persetTable h = 
+  match persetTable with
+    | PersetTable(pset, elist) -> 
+      let filterFrom edge = (match edge with
+        | {high = h'; low = l'} when h = h' -> true
+        | _ -> false)
+        in h::List.concat (List.map (fun e -> (match e with {high = h'; low = l'} -> (persetChildren persetTable l'))) (List.filter filterFrom elist))
+
+
+let hasPath persetTable h l =
+  match persetTable with
+    | PersetTable(pset, elist) -> 
+        try let result = List.find (fun ele -> ele = l) (let children = persetChildren persetTable h in children) in true
+        with Not_found -> false
+
+let checkAddingEdge persetTable high low = 
+  if hasPath persetTable low high then false else true
+
+
+let addPerset persetTable high low =
+  match persetTable with
+    | PersetTable(pset, elist) ->
+        if checkAddingEdge persetTable high low then PersetTable((PSet.add low (PSet.add high pset)), {high = high; low = low}::elist)
+        (* else raise (Exit(1)) *)
+        else ((pr "wrong perset relationship"); raise (Exit(1)))
+
+
+let makeAuthUp p =
+  match p with
+    | Perset(s) -> AuAtomUp(s)
+
+let makeAuthDown p =
+  match p with
+    | Perset(s) -> AuAtomDown(s)
+
+
+(* ---------------------------------------------------------------------- *)
 (* Context management (continued) *)
 
 let rec getbinding fi ctx i =
@@ -241,9 +318,9 @@ let rec getbinding fi ctx i =
     error fi (msg i (List.length ctx))
  let getTypeFromContext fi ctx i =
    match getbinding fi ctx i with
-         VarBind(tyT) -> tyT
-     | TmAbbBind(_,Some(tyT)) -> tyT
-     | TmAbbBind(_,None) -> error fi ("No type recorded for variable "
+         VarBind(tyT,_) -> tyT
+     | TmAbbBind(_,Some(tyT),_,p) -> tyT     (* should add authentication checking here!*)
+     | TmAbbBind(_,None,_,p) -> error fi ("No type recorded for variable "  (* should add authentication checking here!*)
                                         ^ (index2name fi ctx i))
      | _ -> error fi 
        ("getTypeFromContext: Wrong kind of binding for variable " 
@@ -253,7 +330,7 @@ let rec getbinding fi ctx i =
 
 let tmInfo t = match t with
     TmVar(fi,_,_) -> fi
-  | TmAbs(fi,_,_,_) -> fi
+  | TmAbs(fi,_,_,_,_) -> fi
   | TmApp(fi, _, _) -> fi
   | TmAscribe(fi,_,_) -> fi
   | TmString(fi,_) -> fi
@@ -367,7 +444,7 @@ and printty_AType outer ctx tyT = match tyT with
 let printty ctx tyT = printty_Type true ctx tyT 
 
 let rec printtm_Term outer ctx t = match t with
-    TmAbs(fi,x,tyT1,t2) ->
+    TmAbs(fi,x,tyT1,_,t2) ->    (*print authority*)
       (let (ctx',x') = (pickfreshname ctx x) in
          obox(); pr "lambda ";
          pr x'; pr ":"; printty_Type false ctx tyT1; pr ".";
@@ -506,8 +583,8 @@ let printtm ctx t = printtm_Term true ctx t
 
 let prbinding ctx b = match b with
     NameBind -> ()
-  | VarBind(tyT) -> pr ": "; printty ctx tyT
-  | TmAbbBind(t,tyT) -> pr "= "; printtm ctx t
+  | VarBind(tyT,_) -> pr ": "; printty ctx tyT (*todo print authority*)
+  | TmAbbBind(t,tyT,_,p) -> pr "= "; printtm ctx t    (* should add authentication printing here!*)
   | TyVarBind -> ()
   | TyAbbBind(tyT) -> pr "= "; printty ctx tyT 
 

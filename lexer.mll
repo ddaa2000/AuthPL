@@ -47,6 +47,7 @@ let reservedWords = [
   ("down", fun i -> Parser.DOWN i);
   ("require", fun i -> Parser.REQUIRE i);
   ("auas", fun i -> Parser.AUAS i);
+  ("Root", fun i -> Parser.ROOT i);
   
   (* Symbols *)
   ("_", fun i -> Parser.USCORE i);

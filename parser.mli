@@ -35,6 +35,7 @@ type token =
   | DOWN of (Support.Error.info)
   | REQUIRE of (Support.Error.info)
   | AUAS of (Support.Error.info)
+  | ROOT of (Support.Error.info)
   | UCID of (string Support.Error.withinfo)
   | LCID of (string Support.Error.withinfo)
   | INTV of (int Support.Error.withinfo)

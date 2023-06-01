@@ -58,6 +58,7 @@ open Syntax
 %token <Support.Error.info> DOWN
 %token <Support.Error.info> REQUIRE
 %token <Support.Error.info> AUAS
+%token <Support.Error.info> ROOT
 
 /* Identifier and constant value tokens */
 %token <string Support.Error.withinfo> UCID  /* uppercase-initial */
@@ -142,29 +143,38 @@ toplevel :
 /* A top-level command */
 Command :
     IMPORT STRINGV { fun ctx -> (Import($2.v)),ctx } //Import is a command in syntax
-  | Term 
-      { fun ctx -> (let t = $1 ctx in Eval(tmInfo t,t)),ctx }
-  | LCID Binder
-      { fun ctx -> ((Bind($1.i,$1.v,$2 ctx)), addname ctx $1.v) } //Bind is a command in syntax
-  | UCID TyBinder
-      { fun ctx -> ((Bind($1.i, $1.v, $2 ctx)), addname ctx $1.v) }
+  | Perset COLON Term 
+      { fun ctx -> (let t = $3 ctx in Eval(tmInfo t, $1 ctx,t)),ctx }
+  | Perset COLON LCID Binder
+      { fun ctx -> (let p = $1 ctx in ((Bind($3.i,$1 ctx,$3.v,$4 ctx p)), addname ctx $3.v)) } //Bind is a command in syntax
+  | Perset COLON UCID TyBinder
+      { fun ctx -> ((Bind($3.i,$1 ctx,$3.v, $4 ctx)), addname ctx $3.v) }
+  | ROOT COLON Perset ARROW Perset
+      { fun ctx -> ((PersetRelDecl($3 ctx, $5 ctx)),ctx)}
+  | ROOT COLON Perset
+      { fun ctx -> (PersetDecl($3 ctx),ctx)}
 
 /* Right-hand sides of top-level bindings */
 Binder :
-    COLON Type
-      { fun ctx -> VarBind ($2 ctx)}
+    COLON Type TRIANGLE Auth
+      { fun ctx p -> VarBind($2 ctx, $4 ctx)}
   | EQ Term 
-      { fun ctx -> TmAbbBind($2 ctx, None) }
+      { fun ctx p -> TmAbbBind($2 ctx, None, None, p) }
 
 
 /* All auth expressions */
+Perset :
+    UCID
+        { fun ctx -> Perset($1.v) }
+
+
 Auth :
     ArrowAuth
         { $1 }
   | CompAuth
         { $1 }
   | AAuth
-        { fun ctx -> AuAtom($1 ctx) }
+        { fun ctx -> $1 ctx }
 
 CompAuth :
     LPAREN Auth RPAREN AAuth
@@ -237,11 +247,11 @@ Term :
   | LAMBDA LCID COLON Type TRIANGLE Auth DOT Term 
       { fun ctx ->
           let ctx1 = addname ctx $2.v in
-          TmAbs($1, $2.v, $4 ctx, $8 ctx1) }
-  | LAMBDA USCORE COLON Type DOT Term 
+          TmAbs($1, $2.v, $4 ctx, $6 ctx, $8 ctx1) }
+  | LAMBDA USCORE COLON Type TRIANGLE Auth DOT Term 
       { fun ctx ->
           let ctx1 = addname ctx "_" in
-          TmAbs($1, "_", $4 ctx, $6 ctx1) }
+          TmAbs($1, "_", $4 ctx, $6 ctx, $8 ctx1) }
   | AppTerm COLONEQ AppTerm
       { fun ctx -> TmAssign($2, $1 ctx, $3 ctx) }
   | CASE Term OF Cases
@@ -251,11 +261,11 @@ Term :
       { fun ctx -> TmLet($1, $2.v, $4 ctx, $6 (addname ctx $2.v)) }
   | LET USCORE EQ Term IN Term
       { fun ctx -> TmLet($1, "_", $4 ctx, $6 (addname ctx "_")) }
-  | LETREC LCID COLON Type EQ Term IN Term
-      { fun ctx -> 
-          let ctx1 = addname ctx $2.v in 
-          TmLet($1, $2.v, TmFix($1, TmAbs($1, $2.v, $4 ctx, $6 ctx1)),
-                $8 ctx1) }
+//   | LETREC LCID COLON Type EQ Term IN Term
+//       { fun ctx -> 
+//           let ctx1 = addname ctx $2.v in 
+//           TmLet($1, $2.v, TmFix($1, TmAbs($1, $2.v, $4 ctx, $6 ctx1)),
+//                 $8 ctx1) }
   | IF Term THEN Term ELSE Term
       { fun ctx -> TmIf($1, $2 ctx, $4 ctx, $6 ctx) }
 
@@ -289,9 +299,9 @@ AscribeTerm :
   | ATerm
       { $1 }
   | ATerm AUAS AAuth
-      { fun ctx -> TmAuas($2, $1 ctx, AuAtom($3 ctx))}
+      { fun ctx -> TmAuas($2, $1 ctx, $3 ctx)}
   | ATerm REQUIRE AAuth
-      { fun ctx -> TmRequire($2, $1 ctx, AuAtom($3 ctx))}
+      { fun ctx -> TmRequire($2, $1 ctx, $3 ctx)}
 
 FieldTypes :
     /* empty */
@@ -324,9 +334,9 @@ PathTerm :
 TermSeq :
     Term 
       { $1 }
-  | Term SEMI TermSeq 
-      { fun ctx ->
-          TmApp($2, TmAbs($2, "_", TyUnit, $3 (addname ctx "_")), $1 ctx) }
+//   | Term SEMI TermSeq 
+//       { fun ctx ->
+//           TmApp($2, TmAbs($2, "_", TyUnit, $3 (addname ctx "_")), $1 ctx) }
 
 /* Atomic terms are ones that never require extra parentheses */
 ATerm :

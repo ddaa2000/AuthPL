@@ -19,7 +19,7 @@ let rec isval ctx t = match t with
   | TmFalse(_) -> true
   | TmFloat _  -> true
   | t when isnumericval ctx t  -> true
-  | TmAbs(_,_,_,_) -> true
+  | TmAbs(_,_,_,_,_) -> true
   | TmRecord(_,fields) -> List.for_all (fun (l,ti) -> isval ctx ti) fields
   | _ -> false
 
@@ -38,53 +38,53 @@ let shiftstore i store = List.map (fun t -> termShift i t) store
 
 exception NoRuleApplies
 
-let rec eval1 ctx store t = match t with
-    TmApp(fi,TmAbs(_,x,tyT11,t12),v2) when isval ctx v2 ->
+let rec eval1 ctx store pTab p t = match t with
+    TmApp(fi,TmAbs(_,x,tyT11,a,t12),v2) when isval ctx v2 ->
       termSubstTop v2 t12, store
   | TmApp(fi,v1,t2) when isval ctx v1 ->
-      let t2',store' = eval1 ctx store t2 in
+      let t2',store' = eval1 ctx store pTab p t2 in
       TmApp(fi, v1, t2'), store'
   | TmApp(fi,t1,t2) ->
-      let t1',store' = eval1 ctx store t1 in
+      let t1',store' = eval1 ctx store pTab p t1 in
       TmApp(fi, t1', t2), store'
   | TmAscribe(fi,v1,tyT) when isval ctx v1 ->
       v1, store
   | TmAscribe(fi,t1,tyT) ->
-      let t1',store' = eval1 ctx store t1 in
+      let t1',store' = eval1 ctx store pTab p t1 in
       TmAscribe(fi,t1',tyT), store'
   | TmAuas(fi,v1,auth) when isval ctx v1 ->
       v1, store
   | TmAuas(fi,t1,auth) ->
-      let t1',store' = eval1 ctx store t1 in
+      let t1',store' = eval1 ctx store pTab p t1 in
       TmAuas(fi,t1',auth), store'
   | TmRequire(fi,t1,auth) ->
       t1, store
   | TmRef(fi,t1) ->
       if not (isval ctx t1) then
-        let (t1',store') = eval1 ctx store t1
+        let (t1',store') = eval1 ctx store pTab p t1
         in (TmRef(fi,t1'), store')
       else
         let (l,store') = extendstore store t1 in
         (TmLoc(dummyinfo,l), store')
   | TmDeref(fi,t1) ->
       if not (isval ctx t1) then
-        let (t1',store') = eval1 ctx store t1
+        let (t1',store') = eval1 ctx store pTab p t1
         in (TmDeref(fi,t1'), store')
       else (match t1 with
             TmLoc(_,l) -> (lookuploc store l, store)
           | _ -> raise NoRuleApplies)
   | TmAssign(fi,t1,t2) ->
       if not (isval ctx t1) then
-        let (t1',store') = eval1 ctx store t1
+        let (t1',store') = eval1 ctx store pTab p t1
         in (TmAssign(fi,t1',t2), store')
       else if not (isval ctx t2) then
-        let (t2',store') = eval1 ctx store t2
+        let (t2',store') = eval1 ctx store pTab p t2
         in (TmAssign(fi,t1,t2'), store')
       else (match t1 with
             TmLoc(_,l) -> (TmUnit(dummyinfo), updatestore store l t2)
           | _ -> raise NoRuleApplies)
   | TmTag(fi,l,t1,tyT) ->
-      let t1',store' = eval1 ctx store t1 in
+      let t1',store' = eval1 ctx store pTab p t1 in
       TmTag(fi, l, t1',tyT), store'
   | TmCase(fi,TmTag(_,li,v11,_),branches) when isval ctx v11->
       (try 
@@ -92,38 +92,38 @@ let rec eval1 ctx store t = match t with
          termSubstTop v11 body, store
        with Not_found -> raise NoRuleApplies)
   | TmCase(fi,t1,branches) ->
-      let t1',store' = eval1 ctx store t1 in
+      let t1',store' = eval1 ctx store pTab p t1 in
       TmCase(fi, t1', branches), store'
   | TmLet(fi,x,v1,t2) when isval ctx v1 ->
-      termSubstTop v1 t2, store 
+      termSubstTop v1 t2, store
   | TmLet(fi,x,t1,t2) ->
-      let t1',store' = eval1 ctx store t1 in
-      TmLet(fi, x, t1', t2), store' 
+      let t1',store' = eval1 ctx store pTab p t1 in
+      TmLet(fi, x, t1', t2), store'
   | TmFix(fi,v1) as t when isval ctx v1 ->
       (match v1 with
-         TmAbs(_,_,_,t12) -> termSubstTop t t12, store
+         TmAbs(_,_,_,a,t12) -> termSubstTop t t12, store
        | _ -> raise NoRuleApplies)
   | TmFix(fi,t1) ->
-      let t1',store' = eval1 ctx store t1
+      let t1',store' = eval1 ctx store pTab p t1
       in TmFix(fi,t1'), store'
   | TmIf(_,TmTrue(_),t2,t3) ->
       t2, store
   | TmIf(_,TmFalse(_),t2,t3) ->
       t3, store
   | TmIf(fi,t1,t2,t3) ->
-      let t1',store' = eval1 ctx store t1 in
+      let t1',store' = eval1 ctx store pTab p t1 in
       TmIf(fi, t1', t2, t3), store'
   | TmTimesfloat(fi,TmFloat(_,f1),TmFloat(_,f2)) ->
       TmFloat(fi, f1 *. f2), store
   | TmTimesfloat(fi,(TmFloat(_,f1) as t1),t2) ->
-      let t2',store' = eval1 ctx store t2 in
+      let t2',store' = eval1 ctx store pTab p t2 in
       TmTimesfloat(fi,t1,t2') , store'
   | TmTimesfloat(fi,t1,t2) ->
-      let t1',store' = eval1 ctx store t1 in
+      let t1',store' = eval1 ctx store pTab p t1 in
       TmTimesfloat(fi,t1',t2) , store'
   | TmVar(fi,n,_) ->
       (match getbinding fi ctx n with
-          TmAbbBind(t,_) -> t,store 
+          TmAbbBind(t,_,a,p) -> t,store (*should add authentication checking here*)
         | _ -> raise NoRuleApplies)
   | TmRecord(fi,fields) ->
       let rec evalafield l = match l with 
@@ -132,7 +132,7 @@ let rec eval1 ctx store t = match t with
           let rest',store' = evalafield rest in
           (l,vi)::rest', store'
       | (l,ti)::rest -> 
-          let ti',store' = eval1 ctx store ti in
+          let ti',store' = eval1 ctx store pTab p ti in
           (l, ti')::rest, store'
       in let fields',store' = evalafield fields in
       TmRecord(fi, fields'), store'
@@ -140,39 +140,39 @@ let rec eval1 ctx store t = match t with
       (try List.assoc l fields, store
        with Not_found -> raise NoRuleApplies)
   | TmProj(fi, t1, l) ->
-      let t1',store' = eval1 ctx store t1 in
+      let t1',store' = eval1 ctx store pTab p t1 in
       TmProj(fi, t1', l), store'
   | TmSucc(fi,t1) ->
-      let t1',store' = eval1 ctx store t1 in
+      let t1',store' = eval1 ctx store pTab p t1 in
       TmSucc(fi, t1'), store'
   | TmPred(_,TmZero(_)) ->
       TmZero(dummyinfo), store
   | TmPred(_,TmSucc(_,nv1)) when (isnumericval ctx nv1) ->
       nv1, store
   | TmPred(fi,t1) ->
-      let t1',store' = eval1 ctx store t1 in
+      let t1',store' = eval1 ctx store pTab p t1 in
       TmPred(fi, t1'), store'
   | TmIsZero(_,TmZero(_)) ->
       TmTrue(dummyinfo), store
   | TmIsZero(_,TmSucc(_,nv1)) when (isnumericval ctx nv1) ->
       TmFalse(dummyinfo), store
   | TmIsZero(fi,t1) ->
-      let t1',store' = eval1 ctx store t1 in
+      let t1',store' = eval1 ctx store pTab p t1 in
       TmIsZero(fi, t1'), store'
   | _ -> 
       raise NoRuleApplies
 
-let rec eval ctx store t =
-  try let t',store' = eval1 ctx store t
-      in eval ctx store' t'
+let rec eval ctx store pTab p t =
+  try let t',store' = eval1 ctx store pTab p t
+      in eval ctx store' pTab p t'
   with NoRuleApplies -> t,store
 
 (* ------------------------   SUBTYPING  ------------------------ *)
 
-let evalbinding ctx store b = match b with
-    TmAbbBind(t,tyT) ->
-      let t',store' = eval ctx store t in 
-      TmAbbBind(t',tyT), store'
+let evalbinding ctx store pTab p b = match b with
+    TmAbbBind(t,tyT,a,p) ->                      (*should add authentication checking here*)
+      let t',store' = eval ctx store pTab p t in 
+      TmAbbBind(t',tyT,a,p), store'             (*should add authentication checking here*)
   | bind -> bind,store
 
 let istyabb ctx i = 
@@ -365,8 +365,8 @@ and meet ctx tyS tyT =
 let rec typeof ctx t =
   match t with
     TmVar(fi,i,_) -> getTypeFromContext fi ctx i
-  | TmAbs(fi,x,tyT1,t2) ->
-      let ctx' = addbinding ctx x (VarBind(tyT1)) in
+  | TmAbs(fi,x,tyT1,a,t2) ->
+      let ctx' = addbinding ctx x (VarBind(tyT1,a)) in
       let tyT2 = typeof ctx' t2 in
       TyArr(tyT1, typeShift (-1) tyT2)
   | TmApp(fi,t1,t2) ->
@@ -395,7 +395,7 @@ let rec typeof ctx t =
       error fi "locations are not supposed to occur in source programs!"
   | TmLet(fi,x,t1,t2) ->
      let tyT1 = typeof ctx t1 in
-     let ctx' = addbinding ctx x (VarBind(tyT1)) in         
+     let ctx' = addbinding ctx x (VarBind(tyT1, AuAtomDown("a"))) in         (*todo change auth*)
      typeShift (-1) (typeof ctx' t2)
   | TmTrue(fi) -> 
       TyBool
@@ -430,7 +430,7 @@ let rec typeof ctx t =
                            try List.assoc li fieldtys
                            with Not_found ->
                              error fi ("label "^li^" not found") in
-                         let ctx' = addbinding ctx xi (VarBind(tyTi)) in
+                         let ctx' = addbinding ctx xi (VarBind(tyTi,AuAtomDown("a"))) in  (*todo change auth*)
                          typeShift (-1) (typeof ctx' ti))
                       cases in
            List.fold_left (join ctx) TyBot casetypes
@@ -493,3 +493,149 @@ let rec typeof ctx t =
   | TmIsZero(fi,t1) ->
       if subtype ctx (typeof ctx t1) TyNat then TyBool
       else error fi "argument of iszero is not a number"
+
+(* ------------------------   SUBAUTH  ------------------------ *)
+
+let rec subauth ctx pTab auL auH = true
+
+let subOfPerset ctx pTab p a = 
+  let presentUp = makeAuthUp p in let presentDown = makeAuthDown p in
+  (subauth ctx pTab a presentUp) || (subauth ctx pTab a presentUp)
+
+(* ------------------------   AUTH TYPING  ------------------------ *)
+
+let rec substituteAuth a aAtom = 
+  match a with
+  | AuAtomDown(_) -> aAtom
+  | AuAtomUp(_) -> aAtom
+  | AuArr(a1,a2) -> AuArr(substituteAuth a1 aAtom, substituteAuth a2 aAtom)
+  | AuComp(a1,a2) -> AuComp(substituteAuth a1 aAtom, substituteAuth a2 aAtom)
+
+
+let rec authOf ctx pTab p t = 
+  let presentUp = makeAuthUp p in let presentDown = makeAuthDown p in
+  match t with
+  (*TmVar(fi,i,_) -> getTypeFromContext fi ctx i  (*authentication checking*) *)
+  | TmAbs(fi,x,tyT1,a,t2) ->                           (*authentication checking*)
+      let ctx' = addbinding ctx x (VarBind(tyT1,a)) in
+      let a2 = authOf ctx' pTab p t2 in
+      AuArr(a,a2)
+  | TmApp(fi,t1,t2) ->
+      let aArrow = authOf ctx pTab p t1 in
+      let a3 = authOf ctx pTab p t2 in
+      (match aArrow with
+          AuArr(a1,a2) ->
+            if (subauth ctx pTab a1 a3) && (subOfPerset ctx pTab p a3) && (subOfPerset ctx pTab p a2) then a2 
+            else error fi "unexpected auth in appliaction"
+        | _ -> error fi "arrow type expected")
+  | TmAscribe(fi,t1,tyT) ->
+      authOf ctx pTab p t1
+  | TmAuas(fi,t1,a1) ->
+      let a = authOf ctx pTab p t1 in
+      if (subauth ctx pTab a (makeAuthDown p)) && (subOfPerset ctx pTab p a1) then substituteAuth a a1
+      else error fi "no auth on auas"
+  | TmRequire(fi,t1,auth) ->
+      let a = authOf ctx pTab p t1 in AuComp(a, auth)
+  | TmString _ -> presentUp
+  | TmUnit(fi) -> presentUp
+  | TmRef(fi,t1) ->
+      authOf ctx pTab p t1
+  | TmLoc(fi,l) ->
+      error fi "locations are not supposed to occur in source programs!"
+  (*| TmLet(fi,x,t1,t2) ->
+     let tyT1 = typeof ctx t1 in
+     let ctx' = addbinding ctx x (VarBind(tyT1)) in         
+     typeShift (-1) (typeof ctx' t2)
+  | TmTrue(fi) -> 
+      TyBool
+  | TmFalse(fi) -> 
+      TyBool
+  | TmIf(fi,t1,t2,t3) ->
+      if subtype ctx (typeof ctx t1) TyBool then
+        join ctx (typeof ctx t2) (typeof ctx t3)
+      else error fi "guard of conditional not a boolean"
+  | TmRecord(fi, fields) ->
+      let fieldtys = 
+        List.map (fun (li,ti) -> (li, typeof ctx ti)) fields in
+      TyRecord(fieldtys)
+  | TmProj(fi, t1, l) ->
+      (match simplifyty ctx (typeof ctx t1) with
+          TyRecord(fieldtys) ->
+            (try List.assoc l fieldtys
+             with Not_found -> error fi ("label "^l^" not found"))
+        | TyBot -> TyBot
+        | _ -> error fi "Expected record type")
+  | TmCase(fi, t, cases) ->
+      (match simplifyty ctx (typeof ctx t) with
+         TyVariant(fieldtys) ->
+           List.iter
+             (fun (li,(xi,ti)) ->
+                try let _ = List.assoc li fieldtys in ()
+                with Not_found -> error fi ("label "^li^" not in type"))
+             cases;
+           let casetypes =
+             List.map (fun (li,(xi,ti)) ->
+                         let tyTi =
+                           try List.assoc li fieldtys
+                           with Not_found ->
+                             error fi ("label "^li^" not found") in
+                         let ctx' = addbinding ctx xi (VarBind(tyTi)) in
+                         typeShift (-1) (typeof ctx' ti))
+                      cases in
+           List.fold_left (join ctx) TyBot casetypes
+        | TyBot -> TyBot
+        | _ -> error fi "Expected variant type")
+  | TmTag(fi, li, ti, tyT) ->
+      (match simplifyty ctx tyT with
+          TyVariant(fieldtys) ->
+            (try
+               let tyTiExpected = List.assoc li fieldtys in
+               let tyTi = typeof ctx ti in
+               if subtype ctx tyTi tyTiExpected
+                 then tyT
+                 else error fi "field does not have expected type"
+             with Not_found -> error fi ("label "^li^" not found"))
+        | _ -> error fi "Annotation is not a variant type")
+  | TmFix(fi, t1) ->
+      let tyT1 = typeof ctx t1 in
+      (match simplifyty ctx tyT1 with
+           TyArr(tyT11,tyT12) ->
+             if subtype ctx tyT12 tyT11 then tyT12
+             else error fi "result of body not compatible with domain"
+         | TyBot -> TyBot
+         | _ -> error fi "arrow type expected") *)
+  | TmDeref(fi,t1) ->
+      let a = authOf ctx pTab p t1 in
+      if subOfPerset ctx pTab p a then a else error fi "no authority on location"
+  (*| TmAssign(fi,t1,t2) ->
+      (match simplifyty ctx (typeof ctx t1) with
+          TyRef(tyT1) ->
+            if subtype ctx (typeof ctx t2) tyT1 then
+              TyUnit
+            else
+              error fi "arguments of := are incompatible"
+        | TyBot -> let _ = typeof ctx t2 in TyBot
+        |TySink(tyT1) ->
+            if subtype ctx (typeof ctx t2) tyT1 then
+              TyUnit
+            else
+              error fi "arguments of := are incompatible"
+        | _ -> error fi "argument of ! is not a Ref or Sink")
+  | TmFloat _ -> TyFloat
+  | TmTimesfloat(fi,t1,t2) ->
+      if subtype ctx (typeof ctx t1) TyFloat
+      && subtype ctx (typeof ctx t2) TyFloat then TyFloat
+      else error fi "argument of timesfloat is not a number"
+  | TmInert(fi,tyT) ->
+      tyT
+  | TmZero(fi) ->
+      TyNat
+  | TmSucc(fi,t1) ->
+      if subtype ctx (typeof ctx t1) TyNat then TyNat
+      else error fi "argument of succ is not a number"
+  | TmPred(fi,t1) ->
+      if subtype ctx (typeof ctx t1) TyNat then TyNat
+      else error fi "argument of pred is not a number"
+  | TmIsZero(fi,t1) ->
+      if subtype ctx (typeof ctx t1) TyNat then TyBool
+      else error fi "argument of iszero is not a number" *)
