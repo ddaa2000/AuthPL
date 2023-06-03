@@ -61,6 +61,14 @@ let checkbinding fi ctx b = match b with
   | TyVarBind -> TyVarBind
   | TyAbbBind(tyT) -> TyAbbBind(tyT)
 
+let checkbindingAuth fi ctx pTab b = match b with
+    NameBind -> NameBind
+  | VarBind(tyT,a) -> VarBind(tyT,a)
+  | TmAbbBind(t,ty,None,p) -> TmAbbBind(t,ty,Some(authOf ctx pTab p t),p) (*should add authentication checking here*)
+  | TmAbbBind(t,ty,Some(a),p) ->  b (*should add authentication checking here*)
+  | TyVarBind -> TyVarBind
+  | TyAbbBind(tyT) -> TyAbbBind(tyT)
+
 let prbindingty ctx b = match b with
     NameBind -> ()
   | VarBind(tyT,a) -> pr ": "; printty ctx tyT 
@@ -100,7 +108,7 @@ and process_command (ctx,store,pTab) cmd = match cmd with
       force_newline();
       (ctx,store,pTab)
   | Bind(fi,p,x,bind) -> 
-      let bind = checkbinding fi ctx bind in (*check some validity*)
+      let bind = checkbindingAuth fi ctx pTab (checkbinding fi ctx bind) in (*check some validity*)
       let bind',store' = evalbinding ctx store pTab p bind in (*evaluate the terms*)
       pr x; pr " "; prbindingty ctx bind'; force_newline();
       addbinding ctx x bind', (shiftstore 1 store'), pTab (*add the binding to context ??????shiftstore??????*)

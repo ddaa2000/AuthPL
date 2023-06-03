@@ -36,6 +36,7 @@ type auth =
   | AuAtomDown of string
   | AuComp of auth * auth
   | AuArr of auth * auth
+  | AuTmp
 
 type term =
     TmVar of info * int * int
@@ -43,7 +44,7 @@ type term =
   | TmApp of info * term * term
   | TmAscribe of info * term * ty
   | TmString of info * string
-  | TmUnit of info
+  | TmUnit of info * auth
   | TmLoc of info * int
   | TmRef of info * term
   | TmDeref of info * term 
@@ -52,14 +53,14 @@ type term =
   | TmTag of info * string * term * ty
   | TmLet of info * string * term * term
   | TmFix of info * term
-  | TmTrue of info
-  | TmFalse of info
+  | TmTrue of info * auth
+  | TmFalse of info * auth
   | TmIf of info * term * term * term
   | TmFloat of info * float
   | TmTimesfloat of info * term * term
   | TmRecord of info * (string * term) list
   | TmProj of info * term * string
-  | TmZero of info
+  | TmZero of info * auth
   | TmSucc of info * term
   | TmPred of info * term
   | TmIsZero of info * term
@@ -97,12 +98,15 @@ val getTypeFromContext : info -> context -> int -> ty
 type persetTable
 type edge
 val emptyPersetTable : persetTable
+val hasPath : persetTable -> perset -> perset -> bool
 val addPerset : persetTable -> perset -> perset -> persetTable
 val prPerset : perset -> unit
 val prPersetTab : persetTable -> unit
 val prPersets : edge list -> unit
 val makeAuthUp : perset -> auth
 val makeAuthDown : perset -> auth
+val makePerset : auth -> perset
+val getAuthFromContext : info -> context -> int -> perset -> (auth * perset)
 
 (* Shifting and substitution *)
 val termShift: int -> term -> term

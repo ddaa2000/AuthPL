@@ -81,7 +81,7 @@ let rec eval1 ctx store pTab p t = match t with
         let (t2',store') = eval1 ctx store pTab p t2
         in (TmAssign(fi,t1,t2'), store')
       else (match t1 with
-            TmLoc(_,l) -> (TmUnit(dummyinfo), updatestore store l t2)
+            TmLoc(_,l) -> (TmUnit(dummyinfo, AuTmp), updatestore store l t2)
           | _ -> raise NoRuleApplies)
   | TmTag(fi,l,t1,tyT) ->
       let t1',store' = eval1 ctx store pTab p t1 in
@@ -146,16 +146,16 @@ let rec eval1 ctx store pTab p t = match t with
       let t1',store' = eval1 ctx store pTab p t1 in
       TmSucc(fi, t1'), store'
   | TmPred(_,TmZero(_)) ->
-      TmZero(dummyinfo), store
+      TmZero(dummyinfo,AuTmp), store
   | TmPred(_,TmSucc(_,nv1)) when (isnumericval ctx nv1) ->
       nv1, store
   | TmPred(fi,t1) ->
       let t1',store' = eval1 ctx store pTab p t1 in
       TmPred(fi, t1'), store'
   | TmIsZero(_,TmZero(_)) ->
-      TmTrue(dummyinfo), store
+      TmTrue(dummyinfo,AuTmp), store
   | TmIsZero(_,TmSucc(_,nv1)) when (isnumericval ctx nv1) ->
-      TmFalse(dummyinfo), store
+      TmFalse(dummyinfo,AuTmp), store
   | TmIsZero(fi,t1) ->
       let t1',store' = eval1 ctx store pTab p t1 in
       TmIsZero(fi, t1'), store'
@@ -388,7 +388,7 @@ let rec typeof ctx t =
   | TmRequire(fi,t1,auth) ->
     typeof ctx t1
   | TmString _ -> TyString
-  | TmUnit(fi) -> TyUnit
+  | TmUnit(fi,_) -> TyUnit
   | TmRef(fi,t1) ->
       TyRef(typeof ctx t1)
   | TmLoc(fi,l) ->
@@ -397,9 +397,9 @@ let rec typeof ctx t =
      let tyT1 = typeof ctx t1 in
      let ctx' = addbinding ctx x (VarBind(tyT1, AuAtomDown("a"))) in         (*todo change auth*)
      typeShift (-1) (typeof ctx' t2)
-  | TmTrue(fi) -> 
+  | TmTrue(fi,_) -> 
       TyBool
-  | TmFalse(fi) -> 
+  | TmFalse(fi,_) -> 
       TyBool
   | TmIf(fi,t1,t2,t3) ->
       if subtype ctx (typeof ctx t1) TyBool then
@@ -482,7 +482,7 @@ let rec typeof ctx t =
       else error fi "argument of timesfloat is not a number"
   | TmInert(fi,tyT) ->
       tyT
-  | TmZero(fi) ->
+  | TmZero(fi,_) ->
       TyNat
   | TmSucc(fi,t1) ->
       if subtype ctx (typeof ctx t1) TyNat then TyNat
@@ -496,7 +496,38 @@ let rec typeof ctx t =
 
 (* ------------------------   SUBAUTH  ------------------------ *)
 
-let rec subauth ctx pTab auL auH = true
+let subauthAtom pTab auL auH = 
+  match auL with
+  | AuAtomUp(s) -> 
+    (match auH with
+    | AuAtomUp(_) -> hasPath pTab (makePerset auH) (makePerset auL)
+    | AuAtomDown(_) -> false
+    | _ -> pr "internal error: have to be atomic";raise (Exit(1)))
+  | AuAtomDown(s) -> 
+    (match auH with
+    | AuAtomUp(_) ->  hasPath pTab (makePerset auH) (makePerset auL)
+    | AuAtomDown(_) ->  hasPath pTab (makePerset auH) (makePerset auL)
+    | _ -> pr "internal error: have to be atomic";raise (Exit(1)))
+  | _ -> pr "internal error: have to be atomic";raise (Exit(1))
+
+
+let rec subauth ctx pTab auL auH = 
+  match auL with
+  | AuAtomUp(s) -> 
+    (match auH with
+    | AuComp(a,ab) -> (subauth ctx pTab auL a) || (subauth ctx pTab auL ab)
+    | AuArr(a1,a2) -> (subauth ctx pTab auL a1) || (subauth ctx pTab auL a2)
+    | _ -> subauthAtom pTab auL auH
+    )
+  | AuAtomDown(s) -> 
+    (match auH with
+    | AuComp(a,ab) -> (subauth ctx pTab auL a) || (subauth ctx pTab auL ab)
+    | AuArr(a1,a2) -> (subauth ctx pTab auL a1) || (subauth ctx pTab auL a2)
+    | _ -> subauthAtom pTab auL auH
+    )
+  | AuComp(a,ab) ->
+    auL = auH
+  | AuArr(a1,a2) -> (subauth ctx pTab a1 auH) && (subauth ctx pTab a2 auH)
 
 let subOfPerset ctx pTab p a = 
   let presentUp = makeAuthUp p in let presentDown = makeAuthDown p in
@@ -515,7 +546,8 @@ let rec substituteAuth a aAtom =
 let rec authOf ctx pTab p t = 
   let presentUp = makeAuthUp p in let presentDown = makeAuthDown p in
   match t with
-  (*TmVar(fi,i,_) -> getTypeFromContext fi ctx i  (*authentication checking*) *)
+  TmVar(fi,i,_) -> let (a,p') = getAuthFromContext fi ctx i p  (*authentication checking*) 
+    in if p = p' then a else (if subOfPerset ctx pTab p a then a else error fi "no authentication to use outer element")
   | TmAbs(fi,x,tyT1,a,t2) ->                           (*authentication checking*)
       let ctx' = addbinding ctx x (VarBind(tyT1,a)) in
       let a2 = authOf ctx' pTab p t2 in
@@ -537,7 +569,7 @@ let rec authOf ctx pTab p t =
   | TmRequire(fi,t1,auth) ->
       let a = authOf ctx pTab p t1 in AuComp(a, auth)
   | TmString _ -> presentUp
-  | TmUnit(fi) -> presentUp
+  | TmUnit(fi,a) -> a
   | TmRef(fi,t1) ->
       authOf ctx pTab p t1
   | TmLoc(fi,l) ->
@@ -545,12 +577,10 @@ let rec authOf ctx pTab p t =
   (*| TmLet(fi,x,t1,t2) ->
      let tyT1 = typeof ctx t1 in
      let ctx' = addbinding ctx x (VarBind(tyT1)) in         
-     typeShift (-1) (typeof ctx' t2)
-  | TmTrue(fi) -> 
-      TyBool
-  | TmFalse(fi) -> 
-      TyBool
-  | TmIf(fi,t1,t2,t3) ->
+     typeShift (-1) (typeof ctx' t2) *)
+  | TmTrue(fi,a) -> a 
+  | TmFalse(fi,a) -> a
+  (*| TmIf(fi,t1,t2,t3) ->
       if subtype ctx (typeof ctx t1) TyBool then
         join ctx (typeof ctx t2) (typeof ctx t3)
       else error fi "guard of conditional not a boolean"

@@ -38,14 +38,15 @@ type auth =
   | AuAtomDown of string
   | AuComp of auth * auth
   | AuArr of auth * auth
+  | AuTmp
 
-type term =
+  type term =
     TmVar of info * int * int
   | TmAbs of info * string * ty * auth * term
   | TmApp of info * term * term
   | TmAscribe of info * term * ty
   | TmString of info * string
-  | TmUnit of info
+  | TmUnit of info * auth
   | TmLoc of info * int
   | TmRef of info * term
   | TmDeref of info * term 
@@ -54,14 +55,14 @@ type term =
   | TmTag of info * string * term * ty
   | TmLet of info * string * term * term
   | TmFix of info * term
-  | TmTrue of info
-  | TmFalse of info
+  | TmTrue of info * auth
+  | TmFalse of info * auth
   | TmIf of info * term * term * term
   | TmFloat of info * float
   | TmTimesfloat of info * term * term
   | TmRecord of info * (string * term) list
   | TmProj of info * term * string
-  | TmZero of info
+  | TmZero of info * auth
   | TmSucc of info * term
   | TmPred of info * term
   | TmIsZero of info * term
@@ -154,7 +155,7 @@ let tmmap onvar ontype c t =
   | TmAuas(fi,t1,auth) -> TmAuas(fi,walk c t1, auth)    (*may need auth shift in future*)
   | TmRequire(fi,t1,auth) -> TmRequire(fi,walk c t1, auth) (*may need auth shift in future*)
   | TmString _ as t -> t
-  | TmUnit(fi) as t -> t
+  | TmUnit(fi,_) as t -> t
   | TmLoc(fi,l) as t -> t
   | TmRef(fi,t1) -> TmRef(fi,walk c t1)
   | TmDeref(fi,t1) -> TmDeref(fi,walk c t1)
@@ -168,14 +169,14 @@ let tmmap onvar ontype c t =
   | TmFix(fi,t1) -> TmFix(fi,walk c t1)
   | TmFloat _ as t -> t
   | TmTimesfloat(fi,t1,t2) -> TmTimesfloat(fi, walk c t1, walk c t2)
-  | TmTrue(fi) as t -> t
-  | TmFalse(fi) as t -> t
+  | TmTrue(fi,_) as t -> t
+  | TmFalse(fi,_) as t -> t
   | TmIf(fi,t1,t2,t3) -> TmIf(fi,walk c t1,walk c t2,walk c t3)
   | TmProj(fi,t1,l) -> TmProj(fi,walk c t1,l)
   | TmRecord(fi,fields) -> TmRecord(fi,List.map (fun (li,ti) ->
                                                (li,walk c ti))
                                     fields)
-  | TmZero(fi)      -> TmZero(fi)
+  | TmZero(fi,a)      -> TmZero(fi,a)
   | TmSucc(fi,t1)   -> TmSucc(fi, walk c t1)
   | TmPred(fi,t1)   -> TmPred(fi, walk c t1)
   | TmIsZero(fi,t1) -> TmIsZero(fi, walk c t1)
@@ -238,6 +239,30 @@ let tytermSubstTop tyS t =
   termShift (-1) (tytermSubst (typeShift 1 tyS) 0 t)
 
 (* ---------------------------------------------------------------------- *)
+
+
+(* Context management (continued) *)
+
+let rec getbinding fi ctx i =
+  try
+    let (_,bind) = List.nth ctx i in
+    bindingshift (i+1) bind 
+  with Failure _ ->
+    let msg =
+      Printf.sprintf "Variable lookup failure: offset: %d, ctx size: %d" in
+    error fi (msg i (List.length ctx))
+ let getTypeFromContext fi ctx i =
+   match getbinding fi ctx i with
+         VarBind(tyT,_) -> tyT
+     | TmAbbBind(_,Some(tyT),_,p) -> tyT     (* should add authentication checking here!*)
+     | TmAbbBind(_,None,_,p) -> error fi ("No type recorded for variable "  (* should add authentication checking here!*)
+                                        ^ (index2name fi ctx i))
+     | _ -> error fi 
+       ("getTypeFromContext: Wrong kind of binding for variable " 
+         ^ (index2name fi ctx i)) 
+(* ---------------------------------------------------------------------- *)
+(* Extracting file info *)
+
 (* Perset management (continued) *)
 module OrderedPerset = struct 
   type t = perset
@@ -304,29 +329,26 @@ let makeAuthDown p =
   match p with
     | Perset(s) -> AuAtomDown(s)
 
+let makePerset a =
+  match a with
+    | AuAtomUp(s) -> Perset(s)
+    | AuAtomDown(s) -> Perset(s)
+    | _ -> pr "internal error: must make automic auth"; raise (Exit(1))
 
-(* ---------------------------------------------------------------------- *)
-(* Context management (continued) *)
 
-let rec getbinding fi ctx i =
-  try
-    let (_,bind) = List.nth ctx i in
-    bindingshift (i+1) bind 
-  with Failure _ ->
-    let msg =
-      Printf.sprintf "Variable lookup failure: offset: %d, ctx size: %d" in
-    error fi (msg i (List.length ctx))
- let getTypeFromContext fi ctx i =
-   match getbinding fi ctx i with
-         VarBind(tyT,_) -> tyT
-     | TmAbbBind(_,Some(tyT),_,p) -> tyT     (* should add authentication checking here!*)
-     | TmAbbBind(_,None,_,p) -> error fi ("No type recorded for variable "  (* should add authentication checking here!*)
+
+let getAuthFromContext fi ctx i p =
+  match getbinding fi ctx i with
+        VarBind(_,a) -> (a,p)
+    | TmAbbBind(_,_,Some(a),p') -> (a,p')     (* should add authentication checking here!*)
+    | TmAbbBind(_,_,None,p') -> error fi ("No auth recorded for variable "  (* should add authentication checking here!*)
                                         ^ (index2name fi ctx i))
-     | _ -> error fi 
-       ("getTypeFromContext: Wrong kind of binding for variable " 
-         ^ (index2name fi ctx i)) 
+    | _ -> error fi 
+      ("getAuthFromContext: Wrong kind of binding for variable " 
+        ^ (index2name fi ctx i)) 
+
+
 (* ---------------------------------------------------------------------- *)
-(* Extracting file info *)
 
 let tmInfo t = match t with
     TmVar(fi,_,_) -> fi
@@ -334,7 +356,7 @@ let tmInfo t = match t with
   | TmApp(fi, _, _) -> fi
   | TmAscribe(fi,_,_) -> fi
   | TmString(fi,_) -> fi
-  | TmUnit(fi) -> fi
+  | TmUnit(fi,_) -> fi
   | TmLoc(fi,_) -> fi
   | TmRef(fi,_) -> fi
   | TmDeref(fi,_) -> fi
@@ -343,14 +365,14 @@ let tmInfo t = match t with
   | TmCase(fi,_,_) -> fi
   | TmLet(fi,_,_,_) -> fi
   | TmFix(fi,_) -> fi
-  | TmTrue(fi) -> fi
-  | TmFalse(fi) -> fi
+  | TmTrue(fi,_) -> fi
+  | TmFalse(fi,_) -> fi
   | TmIf(fi,_,_,_) -> fi
   | TmFloat(fi,_) -> fi
   | TmTimesfloat(fi,_,_) -> fi
   | TmProj(fi,_,_) -> fi
   | TmRecord(fi,_) -> fi
-  | TmZero(fi) -> fi
+  | TmZero(fi,_) -> fi
   | TmSucc(fi,_) -> fi
   | TmPred(fi,_) -> fi
   | TmIsZero(fi,_) -> fi
@@ -568,7 +590,7 @@ and printtm_ATerm outer ctx t = match t with
              pf i f; pr","; if outer then print_space() else break(); 
              p (i+1) rest
        in pr "{"; open_hovbox 0; p 1 fields; pr "}"; cbox()
-  | TmZero(fi) ->
+  | TmZero(fi,a) ->
        pr "0"
   | TmSucc(_,t1) ->
      let rec f n t = match t with

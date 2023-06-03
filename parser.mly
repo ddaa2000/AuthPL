@@ -347,24 +347,24 @@ ATerm :
           TmVar($1.i, name2index $1.i ctx $1.v, ctxlength ctx) }
   | STRINGV
       { fun ctx -> TmString($1.i, $1.v) }
-  | UNIT
-      { fun ctx -> TmUnit($1) }
+  | UNIT TRIANGLE Auth
+      { fun ctx -> TmUnit($1, $3 ctx) }
   | LT LCID EQ Term GT AS Type
       { fun ctx ->
           TmTag($1, $2.v, $4 ctx, $7 ctx) }
-  | TRUE
-      { fun ctx -> TmTrue($1) }
-  | FALSE
-      { fun ctx -> TmFalse($1) }
+  | TRUE TRIANGLE Auth
+      { fun ctx -> TmTrue($1, $3 ctx) }
+  | FALSE TRIANGLE Auth
+      { fun ctx -> TmFalse($1, $3 ctx) }
   | FLOATV
       { fun ctx -> TmFloat($1.i, $1.v) }
   | LCURLY Fields RCURLY
       { fun ctx ->
           TmRecord($1, $2 ctx 1) }
-  | INTV
+  | INTV TRIANGLE Auth
       { fun ctx ->
           let rec f n = match n with
-              0 -> TmZero($1.i)
+              0 -> TmZero($1.i, $3 ctx)
             | n -> TmSucc($1.i, f (n-1))
           in f $1.v }
   | INERT LSQUARE Type RSQUARE 
